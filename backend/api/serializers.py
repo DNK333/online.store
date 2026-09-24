@@ -3,6 +3,7 @@ from rest_framework import serializers
 
 from .models import Category, Product, CartItem, Order, OrderItem
 
+# AI-ASSISTED: GitHub Copilot
 
 class UserRegisterSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True)
@@ -27,11 +28,11 @@ class CategorySerializer(serializers.ModelSerializer):
 
 
 class ProductSerializer(serializers.ModelSerializer):
-    category = CategorySerializer(read_only=True)
+    category_details = CategorySerializer(source='category', read_only=True)
 
     class Meta:
         model = Product
-        fields = '__all__'
+        fields = ('id', 'name', 'slug', 'description', 'price', 'image', 'category', 'category_details', 'stock', 'created_at')
 
 
 class CartItemSerializer(serializers.ModelSerializer):
@@ -52,7 +53,8 @@ class OrderItemSerializer(serializers.ModelSerializer):
 
 class OrderSerializer(serializers.ModelSerializer):
     items = OrderItemSerializer(many=True, read_only=True)
+    user = serializers.CharField(source='user.username', read_only=True)
 
     class Meta:
         model = Order
-        fields = '__all__'
+        fields = ('id', 'user', 'status', 'total_price', 'address', 'created_at', 'items')

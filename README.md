@@ -64,16 +64,44 @@ npm install
 npm run dev
 ```
 
+## Архитектура и реализация
+
+React загружает каталог через Axios из Django REST API. Если backend не запущен, интерфейс использует встроенные демонстрационные данные, поэтому frontend можно открыть отдельно. Корзина в демонстрационном режиме хранится в React state; при наличии токена авторизации добавление и оформление заказа выполняются через backend API. Заказы и история пользователя хранятся в PostgreSQL.
+
 ## Основные API-эндпойнты
 
 - `POST /api/auth/register/`
 - `POST /api/auth/login/`
+- `POST /api/auth/logout/`
 - `GET /api/products/`
-- `GET /api/products/<id>/`
-- `GET /api/categories/`
+- `GET|POST /api/products/`
+- `GET|PUT|DELETE /api/products/<id>/`
+- `GET|POST /api/categories/`
+- `GET|PUT|DELETE /api/categories/<id>/`
 - `GET /api/cart/`
 - `POST /api/cart/add/`
 - `PATCH /api/cart/update/<id>/`
-- `POST /api/orders/`
+- `DELETE /api/cart/remove/<id>/`
+- `POST /api/orders/create/`
 - `GET /api/orders/`
+- `GET /api/orders/<id>/`
 - `GET /api/profile/`
+
+Каталог поддерживает параметры `search`, `category`, `min_price` и `max_price`. Изменение и удаление товаров и категорий доступны администратору; просмотр каталога открыт всем.
+
+## Использование AI
+
+В процессе разработки использовался GitHub Copilot.
+
+AI применялся для:
+
+- генерации отдельных участков кода;
+- поиска и объяснения ошибок;
+- рефакторинга React-компонентов;
+- подготовки документации.
+
+AI-assisted код помечен непосредственно в исходных файлах. Архитектура проекта, интеграция компонентов и проверка результата выполнены разработчиком.
+
+## Автор
+
+Учебный проект интернет-магазина Django + React.

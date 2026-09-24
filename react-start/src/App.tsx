@@ -1,6 +1,9 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import './App.css'
+import { authenticate, createOrder, fetchProducts } from './services/api'
+import { ProductCard } from './components/ProductCard'
 
+// AI-ASSISTED: GitHub Copilot
 type Product = {
   id: number
   name: string
@@ -99,20 +102,41 @@ function App() {
   const [orders, setOrders] = useState(initialOrders)
   const [cart, setCart] = useState<Record<number, number>>({ 1: 1, 3: 2 })
   const [activeProductId, setActiveProductId] = useState(products[0].id)
+  const [catalogProducts, setCatalogProducts] = useState(products)
+  const [checkoutForm, setCheckoutForm] = useState({ name: '', phone: '', address: '' })
+
+  useEffect(() => {
+    fetchProducts()
+      .then((items) => {
+        if (items.length) {
+          setCatalogProducts(items.map((item) => ({
+            id: item.id,
+            name: item.name,
+            category: item.category_details?.name ?? 'Каталог',
+            price: Number(item.price),
+            rating: 5,
+            stock: item.stock,
+            description: item.description,
+            image: item.image || products[0].image,
+          })))
+        }
+      })
+      .catch(() => undefined)
+  }, [])
 
   const filteredProducts = useMemo(() => {
-    return products.filter((product) => {
+    return catalogProducts.filter((product) => {
       const matchesCategory = selectedCategory === 'Все' || product.category === selectedCategory
       const matchesSearch = product.name.toLowerCase().includes(search.toLowerCase())
       const matchesPrice = product.price >= minPrice && product.price <= maxPrice
       return matchesCategory && matchesSearch && matchesPrice
     })
-  }, [selectedCategory, search, minPrice, maxPrice])
+  }, [catalogProducts, selectedCategory, search, minPrice, maxPrice])
 
   const activeProduct =
-    products.find((product) => product.id === activeProductId) ?? filteredProducts[0] ?? products[0]
+    catalogProducts.find((product) => product.id === activeProductId) ?? filteredProducts[0] ?? catalogProducts[0]
 
-  const cartItems = products
+  const cartItems = catalogProducts
     .filter((product) => cart[product.id])
     .map((product) => ({ ...product, quantity: cart[product.id] }))
 
@@ -126,7 +150,8 @@ function App() {
     setCart((current) => {
       const next = (current[productId] ?? 0) + delta
       if (next <= 0) {
-        const { [productId]: _, ...rest } = current
+        const rest = { ...current }
+        delete rest[productId]
         return rest
       }
       return { ...current, [productId]: next }
@@ -138,8 +163,16 @@ function App() {
     section?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }
 
-  const handleCheckout = () => {
-    if (!cartItems.length) return
+  const handleCheckout = async () => {
+    if (!cartItems.length || !checkoutForm.name || !checkoutForm.phone || !checkoutForm.address) return
+
+    if (localStorage.getItem('store_token')) {
+      try {
+        await createOrder(checkoutForm)
+      } catch {
+        return
+      }
+    }
 
     const nextOrder: Order = {
       id: Date.now(),
@@ -150,6 +183,7 @@ function App() {
 
     setOrders((current) => [nextOrder, ...current])
     setCart({})
+    setCheckoutForm({ name: '', phone: '', address: '' })
     scrollToSection('orders')
   }
 
@@ -174,9 +208,18 @@ function App() {
     scrollToSection('account')
   }
 
-  const handleAuthSubmit = (event: React.FormEvent<HTMLFormElement>) => {
+  const handleAuthSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    setUser({ username: 'demo_user', email: 'demo@store.com' })
+    const formData = new FormData(event.currentTarget)
+    const username = String(formData.get('username') ?? 'demo_user')
+    const email = String(formData.get('email') ?? 'demo@store.com')
+    const password = String(formData.get('password') ?? '')
+    try {
+      await authenticate(authMode, { username, email, password })
+    } catch {
+      // The local demo remains usable when the API is offline.
+    }
+    setUser({ username, email })
     scrollToSection('account')
   }
 
@@ -286,23 +329,7 @@ function App() {
           <div className="product-layout">
             <div className="product-grid">
               {filteredProducts.map((product) => (
-                <article key={product.id} className="product-card">
-                  <img src={product.image} alt={product.name} />
-                  <div className="product-body">
-                    <div className="product-meta">
-                      <span>{product.category}</span>
-                      <span>★ {product.rating}</span>
-                    </div>
-                    <h4>{product.name}</h4>
-                    <p>{product.description}</p>
-                    <div className="product-footer">
-                      <strong>${product.price}</strong>
-                      <button type="button" onClick={() => setActiveProductId(product.id)}>
-                        Подробнее
-                      </button>
-                    </div>
-                  </div>
-                </article>
+                <ProductCard key={product.id} product={product} onSelect={setActiveProductId} />
               ))}
             </div>
 
@@ -318,7 +345,7 @@ function App() {
                 <p>{activeProduct.description}</p>
                 <div className="detail-footer">
                   <strong>${activeProduct.price}</strong>
-                  <button type="button" className="primary-button" onClick={() => addToCart(activeProduct.id)}>
+                  <button type="button" className="primary-button" disabled={activeProduct.stock === 0} onClick={() => addToCart(activeProduct.id)}>
                     В корзину
                   </button>
                 </div>
@@ -358,6 +385,12 @@ function App() {
                 <button type="button" className="primary-button checkout" onClick={handleCheckout}>
                   Оформить заказ
                 </button>
+                <div className="checkout-form">
+                  <input aria-label="Имя" placeholder="Имя" value={checkoutForm.name} onChange={(event) => setCheckoutForm({ ...checkoutForm, name: event.target.value })} />
+                  <input aria-label="Телефон" placeholder="Телефон" value={checkoutForm.phone} onChange={(event) => setCheckoutForm({ ...checkoutForm, phone: event.target.value })} />
+                  <input aria-label="Адрес доставки" placeholder="Адрес доставки" value={checkoutForm.address} onChange={(event) => setCheckoutForm({ ...checkoutForm, address: event.target.value })} />
+                  <button type="button" className="secondary-button full-width" onClick={() => setCart({})}>Очистить корзину</button>
+                </div>
               </>
             ) : (
               <p className="empty-state">Корзина пуста. Добавьте товар, чтобы начать оформление.</p>
@@ -382,15 +415,15 @@ function App() {
             <form className="auth-form" onSubmit={handleAuthSubmit}>
               <label>
                 Имя пользователя
-                <input type="text" defaultValue={user.username} />
+                <input name="username" type="text" defaultValue={user.username} />
               </label>
               <label>
                 Email
-                <input type="email" defaultValue={user.email} />
+                <input name="email" type="email" defaultValue={user.email} />
               </label>
               <label>
                 Пароль
-                <input type="password" defaultValue="password123" />
+                <input name="password" type="password" defaultValue="password123" />
               </label>
               <button type="submit" className="primary-button full-width">
                 {authMode === 'login' ? 'Войти' : 'Создать аккаунт'}

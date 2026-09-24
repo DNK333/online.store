@@ -1,12 +1,13 @@
 from decimal import Decimal
 
-from django.contrib.auth import authenticate, login
+from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.models import User
-from django.db.models import Sum
+from django.db import transaction
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated, AllowAny
+from rest_framework.permissions import IsAuthenticated, AllowAny, IsAdminUser, SAFE_METHODS, BasePermission
+from rest_framework.authtoken.models import Token
 
 from .models import Category, Product, CartItem, Order, OrderItem
 from .serializers import (
@@ -17,6 +18,7 @@ from .serializers import (
     OrderSerializer,
 )
 
+# AI-ASSISTED: GitHub Copilot
 
 class AuthViewSet(viewsets.ViewSet):
     permission_classes = [AllowAny]
@@ -27,7 +29,8 @@ class AuthViewSet(viewsets.ViewSet):
         if serializer.is_valid():
             user = serializer.save()
             login(request, user)
-            return Response({'message': 'User registered successfully', 'username': user.username}, status=status.HTTP_201_CREATED)
+            token, _ = Token.objects.get_or_create(user=user)
+            return Response({'token': token.key, 'username': user.username}, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
     @action(detail=False, methods=['post'], url_path='login')
@@ -37,18 +40,32 @@ class AuthViewSet(viewsets.ViewSet):
         user = authenticate(username=username, password=password)
         if user is not None:
             login(request, user)
-            return Response({'message': 'Login successful', 'username': user.username})
+            token, _ = Token.objects.get_or_create(user=user)
+            return Response({'token': token.key, 'username': user.username})
         return Response({'error': 'Invalid credentials'}, status=status.HTTP_401_UNAUTHORIZED)
 
+    @action(detail=False, methods=['post'], permission_classes=[IsAuthenticated], url_path='logout')
+    def logout_user(self, request):
+        Token.objects.filter(user=request.user).delete()
+        logout(request)
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
-class CategoryViewSet(viewsets.ReadOnlyModelViewSet):
+
+class AdminOrReadOnly(BasePermission):
+    def has_permission(self, request, view):
+        return request.method in SAFE_METHODS or IsAdminUser().has_permission(request, view)
+
+
+class CategoryViewSet(viewsets.ModelViewSet):
     queryset = Category.objects.all()
     serializer_class = CategorySerializer
+    permission_classes = [AdminOrReadOnly]
 
 
-class ProductViewSet(viewsets.ReadOnlyModelViewSet):
+class ProductViewSet(viewsets.ModelViewSet):
     queryset = Product.objects.all().select_related('category')
     serializer_class = ProductSerializer
+    permission_classes = [AdminOrReadOnly]
 
     def get_queryset(self):
         queryset = super().get_queryset()
@@ -122,37 +139,51 @@ class OrderViewSet(viewsets.ViewSet):
         serializer = OrderSerializer(orders, many=True)
         return Response(serializer.data)
 
+    def retrieve(self, request, pk=None):
+        order = Order.objects.filter(user=request.user, pk=pk).prefetch_related('items__product').first()
+        if not order:
+            return Response({'error': 'Order not found'}, status=status.HTTP_404_NOT_FOUND)
+        return Response(OrderSerializer(order).data)
+
     @action(detail=False, methods=['post'], url_path='create')
     def create_order(self, request):
         cart_items = CartItem.objects.filter(user=request.user).select_related('product')
-        if not cart_items:
+        if not cart_items.exists():
             return Response({'error': 'Cart is empty'}, status=status.HTTP_400_BAD_REQUEST)
 
+        address = request.data.get('address', '').strip()
+        phone = request.data.get('phone', '').strip()
+        if not address or not phone:
+            return Response({'error': 'Address and phone are required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        unavailable = next((item.product.name for item in cart_items if item.quantity > item.product.stock), None)
+        if unavailable:
+            return Response({'error': f'Not enough stock for {unavailable}'}, status=status.HTTP_400_BAD_REQUEST)
+
         total = sum((item.product.price * item.quantity for item in cart_items), Decimal('0'))
-        order = Order.objects.create(
-            user=request.user,
-            total_price=total,
-            address=request.data.get('address', 'No address provided'),
-        )
-
-        for item in cart_items:
-            OrderItem.objects.create(
-                order=order,
-                product=item.product,
-                quantity=item.quantity,
-                price=item.product.price,
+        with transaction.atomic():
+            order = Order.objects.create(
+                user=request.user,
+                total_price=total,
+                address=f"{request.data.get('name', request.user.username)}; {phone}; {address}",
             )
+            for item in cart_items:
+                OrderItem.objects.create(order=order, product=item.product, quantity=item.quantity, price=item.product.price)
+                item.product.stock -= item.quantity
+                item.product.save(update_fields=['stock'])
+            cart_items.delete()
 
-        cart_items.delete()
-        return Response({'message': 'Order created successfully', 'order_id': order.id}, status=status.HTTP_201_CREATED)
+        return Response(OrderSerializer(order).data, status=status.HTTP_201_CREATED)
 
 
 class ProfileViewSet(viewsets.ViewSet):
     permission_classes = [IsAuthenticated]
 
     def list(self, request):
+        orders = Order.objects.filter(user=request.user).prefetch_related('items__product').order_by('-created_at')
         return Response({
             'username': request.user.username,
             'email': request.user.email,
             'orders_count': Order.objects.filter(user=request.user).count(),
+            'orders': OrderSerializer(orders, many=True).data,
         })
