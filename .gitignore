@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.sqlite3
+.venv/
+venv/
+.env
+.env.*
+
+# Django
+*.log
+media/
+staticfiles/
+
+# Node
+node_modules/
+dist/
+build/
+.npm/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
